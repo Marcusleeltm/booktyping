@@ -720,6 +720,7 @@ function processChar(ch) {
     $('#setVolume').value = s.volume;
     $('#lblVolume').textContent = s.volume;
     $('#setDailyGoal').value = s.dailyGoal;
+    $('#setStopOnMistake').checked = s.stopOnMistake;
   }
   function bindSetting(el, key, applyFn) {
     el.addEventListener('input', () => {
@@ -751,6 +752,7 @@ function processChar(ch) {
     $('#lblVolume').textContent = v; applySound();
   });
   bindSetting($('#setDailyGoal'), 'dailyGoal');
+  bindSetting($('#setStopOnMistake'), 'stopOnMistake');
 
   // Export / import / reset
   $('#exportBtn').addEventListener('click', () => {
