@@ -19,6 +19,7 @@ window.Store = (function () {
         sound: true,
         volume: 30,
         strictPunctuation: false,
+        stopOnMistake: true,
         autoScroll: true,
         skipMode: 'tab',
         highlight: 'char',
