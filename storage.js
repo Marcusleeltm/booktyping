@@ -2,14 +2,16 @@
 window.Store = (function () {
   const KEY = 'epubtype_v2';
   let data = null;
+  let saveListeners = [];
 
   function defaults() {
     return {
       version: 2,
+      lastModified: 0,
       books: [],
-      progress: {},         // {bookId:{sectionId:charIdx}}
-      completed: {},        // {bookId:[sectionId,...]}
-      sessions: [],         // [{bookId,sectionId,wpm,accuracy,chars,duration,errors,date}]
+      progress: {},
+      completed: {},
+      sessions: [],
       settings: {
         theme: 'auto',
         accent: '#6366f1',
@@ -33,19 +35,23 @@ window.Store = (function () {
   function load() {
     try { data = JSON.parse(localStorage.getItem(KEY)) || defaults(); }
     catch (_) { data = defaults(); }
-    // Merge default keys added in newer versions
     const d = defaults();
     data.settings = Object.assign(d.settings, data.settings || {});
     data.streak   = Object.assign(d.streak,   data.streak   || {});
+    if (typeof data.lastModified !== 'number') data.lastModified = 0;
     return data;
   }
 
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (_) {} }
+  function save() {
+    if (!data) return;
+    data.lastModified = Date.now();
+    try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (_) {}
+    saveListeners.forEach((fn) => { try { fn(); } catch (_) {} });
+  }
+
   function get() { return data; }
 
-  function exportAll() {
-    return JSON.stringify(data, null, 2);
-  }
+  function exportAll() { return JSON.stringify(data, null, 2); }
 
   function importAll(json) {
     const parsed = JSON.parse(json);
@@ -62,7 +68,6 @@ window.Store = (function () {
 
   function recordSession(session) {
     data.sessions.push({ ...session, date: Date.now() });
-    // Update streak + daily chars
     const today = new Date().toISOString().slice(0, 10);
     if (data.streak.todayDate !== today) {
       data.streak.todayDate = today;
@@ -87,5 +92,8 @@ window.Store = (function () {
   }
 
   load();
-  return { get, save, exportAll, importAll, reset, recordSession, defaults };
+  return {
+    get, save, exportAll, importAll, reset, recordSession, defaults,
+    onSave(fn) { saveListeners.push(fn); },
+  };
 })();
