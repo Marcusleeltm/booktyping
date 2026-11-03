@@ -84,7 +84,6 @@
 
   <div id="textDisplay" class="text-display" tabindex="0"></div>
 
-  <!-- Hidden input drives typing on mobile & desktop -->
   <input type="text" id="typingInput"
          autocomplete="off" autocorrect="off" autocapitalize="off"
          spellcheck="false" aria-hidden="true" />
@@ -198,6 +197,43 @@
     </label>
   </div>
 
+  <!-- Cloud Sync -->
+  <div class="settings-group">
+    <h3>☁️ Cloud Sync (GitHub Gist)</h3>
+    <p class="muted" style="margin-bottom:.6rem">
+      Sync your library, progress, sessions, and settings across devices via a
+      <strong>private</strong> GitHub Gist. Your data never becomes public.
+    </p>
+
+    <div id="syncNotConnected">
+      <label>GitHub Personal Access Token (only <code>gist</code> scope)
+        <input type="password" id="syncToken" placeholder="ghp_..." autocomplete="off" />
+      </label>
+      <button id="syncConnectBtn" class="primary" style="margin-top:.5rem">Connect / Create Gist</button>
+      <p class="muted" style="font-size:.8rem;margin-top:.4rem">
+        Generate one at
+        <a href="https://github.com/settings/tokens/new?scopes=gist" target="_blank" rel="noopener">github.com/settings/tokens</a>
+        — tick only the <code>gist</code> checkbox.
+      </p>
+    </div>
+
+    <div id="syncConnected" hidden>
+      <p style="margin-bottom:.5rem">
+        ✅ Connected to gist <code id="syncGistId"></code>
+      </p>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.6rem">
+        <button id="syncPullBtn">⬇ Pull from cloud</button>
+        <button id="syncPushBtn">⬆ Push to cloud</button>
+        <button id="syncDisconnectBtn" class="danger">Disconnect</button>
+      </div>
+      <label>
+        <input type="checkbox" id="syncAuto" checked />
+        Auto-sync after changes (debounced 3 s)
+      </label>
+      <p id="syncStatus" class="muted" style="font-size:.8rem;margin-top:.4rem"></p>
+    </div>
+  </div>
+
   <div class="settings-group">
     <h3>Data</h3>
     <button id="exportBtn">⬇ Export data (JSON)</button>
@@ -216,6 +252,7 @@
 <script src="storage.js"></script>
 <script src="audio.js"></script>
 <script src="charts.js"></script>
+<script src="sync.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
