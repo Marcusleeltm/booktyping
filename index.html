@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#1e1e2e" />
+  <title>EPUB Type · Typing Trainer for Books</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- ====== HEADER ====== -->
+  <header class="topbar">
+    <h1>📖 EPUB Type</h1>
+    <div class="topbar-actions">
+      <button id="themeToggle" title="Toggle dark/light">🌓</button>
+      <button id="installBtn" title="Install app" hidden>📲 Install</button>
+      <button id="backToLibrary" hidden>📚 Library</button>
+    </div>
+  </header>
+
+  <!-- ====== LIBRARY VIEW ====== -->
+  <section id="libraryView" class="view">
+    <div class="upload-area" id="dropZone">
+      <p>Drag & drop an <strong>.epub</strong> file here</p>
+      <p class="or">— or —</p>
+      <label class="file-label">
+        <input type="file" id="fileInput" accept=".epub" hidden />
+        Choose EPUB file
+      </label>
+    </div>
+
+    <h2>Your Library</h2>
+    <div id="bookList" class="book-grid"></div>
+    <p id="emptyLibrary" class="muted">No books yet. Upload an EPUB to get started.</p>
+  </section>
+
+  <!-- ====== SECTION PICKER VIEW ====== -->
+  <section id="pickerView" class="view" hidden>
+    <h2 id="pickerTitle">Select sections to type</h2>
+    <p class="muted">
+      Uncheck anything you want to skip (cover, TOC, preface, etc.). Only checked
+      sections will be used for typing practice.
+    </p>
+    <div class="picker-actions">
+      <button id="selectAllBtn">Select all</button>
+      <button id="selectNoneBtn">Select none</button>
+      <button id="autoSkipBtn" class="primary">Auto‑skip front matter</button>
+    </div>
+    <ul id="sectionList" class="section-list"></ul>
+    <div class="picker-footer">
+      <button id="cancelPickerBtn">Cancel</button>
+      <button id="startTypingBtn" class="primary">Start typing →</button>
+    </div>
+  </section>
+
+  <!-- ====== TYPING VIEW ====== -->
+  <section id="typingView" class="view" hidden>
+    <div class="typing-header">
+      <button id="exitTypingBtn">← Back</button>
+      <span id="chapterTitle" class="chapter-title"></span>
+      <span id="progressText" class="muted"></span>
+    </div>
+
+    <div class="stats-bar">
+      <div><span id="wpmDisplay">0</span> WPM</div>
+      <div><span id="accuracyDisplay">100</span>%</div>
+      <div><span id="errorsDisplay">0</span> errors</div>
+      <div><span id="timeDisplay">0:00</span></div>
+      <button id="restartBtn" title="Restart section">↻</button>
+    </div>
+
+    <div id="textDisplay" class="text-display" tabindex="0"></div>
+
+    <div class="typing-footer">
+      <div class="progress-bar"><div id="progressFill"></div></div>
+      <div class="typing-controls">
+        <label><input type="checkbox" id="strictMode" /> Strict punctuation</label>
+        <label><input type="checkbox" id="zenMode" /> Zen mode</label>
+        <button id="nextSectionBtn" class="primary">Next section →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== MODAL / TOAST ====== -->
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="epub-parser.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
