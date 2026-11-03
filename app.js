@@ -282,6 +282,12 @@
     const saved = Store.get().progress[state.currentBook.id]?.[sec.id] || 0;
     state.charIndex = Math.min(saved, sec.text.length);
 
+    // Pre-populate typedChars for resumed positions so they render green
+state.typedChars = [];
+for (let i = 0; i < state.charIndex; i++) {
+  state.typedChars[i] = { expected: sec.text[i], actual: sec.text[i], correct: true };
+}
+
     $('#chapterTitle').textContent = sec.label;
     $('#progressText').textContent = `Section ${index + 1} / ${state.currentSections.length}`;
     updateStatsUI();
@@ -331,7 +337,29 @@
     const fm = $('#focusSelect').value;
     if (fm === 'line') textDisplay.classList.add('focus-line');
   }
+  
+function persistProgress() {
+  const d = Store.get();
+  const sec = state.currentSections[state.sectionIndex];
+  if (!sec) return;
+  d.progress[state.currentBook.id] ||= {};
+  d.progress[state.currentBook.id][sec.id] = state.charIndex;
+  Store.save();
+}
 
+function flashIncorrect() {
+  const cur = textDisplay.querySelector('span.current');
+  if (!cur) return;
+  // Clear any prior flash on the same span
+  if (cur._flashTimer) clearTimeout(cur._flashTimer);
+  cur.classList.add('incorrect');
+  cur._flashTimer = setTimeout(() => {
+    cur.classList.remove('incorrect');
+    // Only restore "current" if the user hasn't advanced past this char
+    if (+cur.dataset.index === state.charIndex) cur.classList.add('current');
+  }, 220);
+}
+  
   function updateCursor() {
     const spans = textDisplay.querySelectorAll('span[data-index]');
     spans.forEach((s) => {
@@ -373,47 +401,65 @@
     }
   }
 
-  function processChar(ch) {
-    if (state.paused) return;
-    if (state.charIndex >= state.text.length) return;
-    const expected = state.text[state.charIndex];
-    const strict = $('#strictMode').checked || settings().strictPunctuation;
-    const norm = (c) => c.replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[–—]/g, '-');
-    const correct = strict ? ch === expected : norm(ch) === norm(expected);
+function processChar(ch) {
+  if (state.paused) return;
+  if (state.charIndex >= state.text.length) return;
 
-    state.typedChars[state.charIndex] = { expected, actual: ch, correct };
-    if (correct) state.correctCount++; else state.errorCount++;
+  const expected = state.text[state.charIndex];
+  const strict = $('#strictMode').checked || settings().strictPunctuation;
+  const norm = (c) =>
+    c.replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[–—]/g, '-');
+  const correct = strict ? ch === expected : norm(ch) === norm(expected);
+
+  if (!state.startTime) state.startTime = Date.now();
+
+  // ── WRONG KEY ─────────────────────────────────────────────
+  if (!correct) {
+    state.errorCount++;
     state.totalTyped++;
+    Sound.error();
 
-    if (!state.startTime) { state.startTime = Date.now(); }
-
-    if (correct) Sound.key(); else Sound.error();
-
-    state.charIndex++;
-    Store.get().progress[state.currentBook.id] ||= {};
-    Store.get().progress[state.currentBook.id][state.currentSections[state.sectionIndex].id] = state.charIndex;
-    Store.save();
-
-    updateCursor();
-    updateStatsUI();
-    checkAchievementsLive();
-
-    if (state.charIndex >= state.text.length) finishSection();
-  }
-
-  function processBackspace() {
-    if (state.paused || state.charIndex <= 0) return;
-    state.charIndex--;
-    const prev = state.typedChars[state.charIndex];
-    if (prev) {
-      if (prev.correct) state.correctCount = Math.max(0, state.correctCount - 1);
-      else state.errorCount = Math.max(0, state.errorCount - 1);
-      state.totalTyped = Math.max(0, state.totalTyped - 1);
+    if (settings().stopOnMistake) {
+      // STRICT: do NOT advance; flash the current character red briefly.
+      flashIncorrect();
+      updateStatsUI();
+      return;                            // ← cursor stays on same char
     }
-    state.typedChars.pop();
+    // FREE-TYPE fallback: advance but mark red
+    state.typedChars[state.charIndex] = { expected, actual: ch, correct: false };
+    state.charIndex++;
+    persistProgress();
     updateCursor();
     updateStatsUI();
+    if (state.charIndex >= state.text.length) finishSection();
+    return;
   }
+
+  // ── CORRECT KEY ───────────────────────────────────────────
+  state.typedChars[state.charIndex] = { expected, actual: ch, correct: true };
+  state.correctCount++;
+  state.totalTyped++;
+  Sound.key();
+
+  state.charIndex++;
+  persistProgress();
+  updateCursor();
+  updateStatsUI();
+  checkAchievementsLive();
+
+  if (state.charIndex >= state.text.length) finishSection();
+}
+  function processBackspace() {
+  if (state.paused || state.charIndex <= 0) return;
+  state.charIndex--;
+  const prev = state.typedChars[state.charIndex];
+  if (prev && prev.correct) state.correctCount = Math.max(0, state.correctCount - 1);
+  state.typedChars.pop();
+  state.totalTyped = Math.max(0, state.totalTyped - 1);
+  persistProgress();
+  updateCursor();
+  updateStatsUI();
+}
 
   function processSkip() {
     if (state.paused || state.charIndex >= state.text.length) return;
