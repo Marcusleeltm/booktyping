@@ -2,486 +2,763 @@
 (function () {
   'use strict';
 
-  // ---------- DOM refs ----------
-  const $ = (sel) => document.querySelector(sel);
-  const libraryView = $('#libraryView');
-  const pickerView = $('#pickerView');
-  const typingView = $('#typingView');
-  const fileInput = $('#fileInput');
-  const dropZone = $('#dropZone');
-  const bookList = $('#bookList');
-  const emptyLibrary = $('#emptyLibrary');
-  const sectionList = $('#sectionList');
-  const pickerTitle = $('#pickerTitle');
+  const $  = (s) => document.querySelector(s);
+  const $$ = (s) => [...document.querySelectorAll(s)];
+  const escapeHtml = (s) => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+
+  // ---------- DOM ----------
+  const views = {
+    library: $('#view-library'),
+    picker:  $('#view-picker'),
+    typing:  $('#view-typing'),
+    stats:   $('#view-stats'),
+    settings:$('#view-settings'),
+  };
+  const typingInput = $('#typingInput');
   const textDisplay = $('#textDisplay');
-  const chapterTitle = $('#chapterTitle');
-  const progressText = $('#progressText');
-  const wpmDisplay = $('#wpmDisplay');
-  const accuracyDisplay = $('#accuracyDisplay');
-  const errorsDisplay = $('#errorsDisplay');
-  const timeDisplay = $('#timeDisplay');
-  const progressFill = $('#progressFill');
   const toastEl = $('#toast');
-  const themeToggle = $('#themeToggle');
-  const installBtn = $('#installBtn');
-  const backToLibrary = $('#backToLibrary');
 
   // ---------- State ----------
-  let library = [];          // [{ id, title, author, sections:[{id,label,text}], addedAt }]
-  let currentBook = null;    // book being typed
-  let currentSections = [];  // selected sections for current session
-  let sectionIndex = 0;
-  let charIndex = 0;
-  let typedChars = [];       // array of {expected, actual, correct}
-  let startTime = null;
-  let timerInterval = null;
-  let errorCount = 0;
-  let correctCount = 0;
-  let totalTyped = 0;
+  const state = {
+    activeView: 'library',
+    currentBook: null,
+    currentSections: [],
+    sectionIndex: 0,
+    text: '',
+    charIndex: 0,
+    typedChars: [],
+    correctCount: 0,
+    errorCount: 0,
+    totalTyped: 0,
+    startTime: null,
+    pausedAt: null,
+    elapsedMs: 0,
+    timerInterval: null,
+    paused: false,
+    currentSectionEl: null,
+  };
 
-  // ---------- Utilities ----------
-  function toast(msg, ms = 2000) {
+  const settings = () => Store.get().settings;
+
+  // ---------- Toast ----------
+  function toast(msg, ms = 2200) {
     toastEl.textContent = msg;
     toastEl.hidden = false;
     clearTimeout(toastEl._t);
     toastEl._t = setTimeout(() => (toastEl.hidden = true), ms);
   }
 
-  function uid() {
-    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  }
-
-  function saveLibrary() {
-    localStorage.setItem('epubtype_library', JSON.stringify(library));
-  }
-
-  function loadLibrary() {
-    try {
-      const raw = localStorage.getItem('epubtype_library');
-      if (raw) library = JSON.parse(raw);
-    } catch (_) { library = []; }
-  }
-
-  function saveProgress(bookId, sectionId, charIdx) {
-    const key = `epubtype_progress_${bookId}`;
-    const prog = JSON.parse(localStorage.getItem(key) || '{}');
-    prog[sectionId] = charIdx;
-    localStorage.setItem(key, JSON.stringify(prog));
-  }
-
-  function getProgress(bookId, sectionId) {
-    const key = `epubtype_progress_${bookId}`;
-    const prog = JSON.parse(localStorage.getItem(key) || '{}');
-    return prog[sectionId] || 0;
-  }
-
-  // ---------- Theme ----------
-  function initTheme() {
-    const saved = localStorage.getItem('epubtype_theme');
-    if (saved === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
-    else if (saved === 'light') document.documentElement.removeAttribute('data-theme');
-    else if (window.matchMedia('(prefers-color-scheme: dark)').matches)
+  // ---------- Theme & settings application ----------
+  function applyTheme() {
+    const t = settings().theme;
+    document.documentElement.removeAttribute('data-theme');
+    if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+    else if (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches)
       document.documentElement.setAttribute('data-theme', 'dark');
   }
-  themeToggle.addEventListener('click', () => {
-    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-    if (isDark) {
-      document.documentElement.removeAttribute('data-theme');
-      localStorage.setItem('epubtype_theme', 'light');
+  function applyTypography() {
+    const s = settings();
+    const root = document.documentElement.style;
+    root.setProperty('--typing-size', s.fontSize + 'px');
+    root.setProperty('--typing-line', (s.lineHeight / 10).toString());
+    root.setProperty('--typing-font',
+      s.fontFamily === 'serif' ? "'Georgia','Times New Roman',serif"
+      : s.fontFamily === 'mono' ? "'JetBrains Mono',ui-monospace,monospace"
+      : "system-ui,-apple-system,'Segoe UI',sans-serif");
+    root.setProperty('--accent', s.accent);
+    root.setProperty('--accent-hover', shade(s.accent, -15));
+  }
+  function shade(hex, pct) {
+    const n = parseInt(hex.slice(1), 16);
+    const r = Math.max(0, Math.min(255, ((n >> 16) & 255) + pct));
+    const g = Math.max(0, Math.min(255, ((n >> 8) & 255) + pct));
+    const b = Math.max(0, Math.min(255, (n & 255) + pct));
+    return '#' + ((r << 16) | (g << 8) | b).toString(16).padStart(6, '0');
+  }
+  function applySound() {
+    Sound.setEnabled(settings().sound);
+    Sound.setVolume(settings().volume / 100);
+  }
+
+  // ---------- Navigation ----------
+  function showView(name) {
+    Object.entries(views).forEach(([k, el]) => (el.hidden = k !== name));
+    state.activeView = name;
+    if (name === 'library') refreshLibrary();
+    if (name === 'stats')    refreshStats();
+    if (name === 'settings') refreshSettingsForm();
+    if (name === 'typing') {
+      setTimeout(() => typingInput.focus(), 50);
     } else {
-      document.documentElement.setAttribute('data-theme', 'dark');
-      localStorage.setItem('epubtype_theme', 'dark');
+      typingInput.blur();
+      if (state.timerInterval) clearInterval(state.timerInterval);
     }
-  });
+    $$('.tabs button').forEach(b => b.classList.toggle('active',
+      b.dataset.tab === name || (name === 'picker' && b.dataset.tab === 'library')));
+  }
 
-  // ---------- Library rendering ----------
-  function renderLibrary() {
-    bookList.innerHTML = '';
-    if (library.length === 0) {
-      emptyLibrary.hidden = false;
-      return;
-    }
-    emptyLibrary.hidden = true;
-    library.forEach((book) => {
+  $$('.tabs button').forEach((btn) =>
+    btn.addEventListener('click', () => showView(btn.dataset.tab)));
+
+  // ---------- Library ----------
+  function refreshLibrary() {
+    const search = ($('#libSearch').value || '').toLowerCase();
+    const list = $('#bookList');
+    const empty = $('#emptyLibrary');
+    const books = Store.get().books
+      .filter(b => !search || b.title.toLowerCase().includes(search)
+                       || (b.author || '').toLowerCase().includes(search));
+    list.innerHTML = '';
+    empty.hidden = books.length !== 0;
+    books.forEach((book) => {
+      const completed = (Store.get().completed[book.id] || []).length;
+      const pct = book.sections.length ? Math.round(completed / book.sections.length * 100) : 0;
       const card = document.createElement('div');
       card.className = 'book-card';
       card.innerHTML = `
         <h3>${escapeHtml(book.title)}</h3>
         <div class="meta">${escapeHtml(book.author || 'Unknown author')}</div>
-        <div class="meta">${book.sections.length} sections · added ${new Date(book.addedAt).toLocaleDateString()}</div>
+        <div class="meta">${book.sections.length} sections · ${completed} completed · ${pct}%</div>
+        <div class="progress-mini"><div style="width:${pct}%"></div></div>
         <div class="actions">
           <button data-action="open" data-id="${book.id}">Open</button>
+          <button data-action="reset" data-id="${book.id}">↻</button>
           <button data-action="delete" data-id="${book.id}">🗑</button>
-        </div>
-      `;
-      bookList.appendChild(card);
+        </div>`;
+      list.appendChild(card);
     });
-    bookList.querySelectorAll('button').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        const action = btn.dataset.action;
-        const id = btn.dataset.id;
-        if (action === 'open') openBook(id);
-        else if (action === 'delete') deleteBook(id);
+    list.querySelectorAll('button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const { action, id } = btn.dataset;
+        if (action === 'open')   openPickerFor(id);
+        if (action === 'delete') deleteBook(id);
+        if (action === 'reset')  resetBookProgress(id);
       });
     });
   }
-
-  function escapeHtml(str) {
-    const d = document.createElement('div');
-    d.textContent = str;
-    return d.innerHTML;
-  }
+  $('#libSearch').addEventListener('input', refreshLibrary);
 
   function deleteBook(id) {
-    if (!confirm('Delete this book and its progress?')) return;
-    library = library.filter((b) => b.id !== id);
-    localStorage.removeItem(`epubtype_progress_${id}`);
-    saveLibrary();
-    renderLibrary();
+    if (!confirm('Delete this book and all its progress?')) return;
+    const d = Store.get();
+    d.books = d.books.filter(b => b.id !== id);
+    delete d.progress[id];
+    delete d.completed[id];
+    Store.save();
+    refreshLibrary();
     toast('Book deleted');
   }
-
-  function openBook(id) {
-    const book = library.find((b) => b.id === id);
-    if (!book) return;
-    currentBook = book;
-    pickerTitle.textContent = `Select sections from “${book.title}”`;
-    renderSectionList(book);
-    showView('picker');
-  }
-
-  // ---------- Section picker ----------
-  function renderSectionList(book) {
-    sectionList.innerHTML = '';
-    book.sections.forEach((sec) => {
-      const li = document.createElement('li');
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = true;
-      cb.dataset.sectionId = sec.id;
-      const span = document.createElement('span');
-      span.className = 'label';
-      span.textContent = sec.label;
-      const badge = document.createElement('span');
-      badge.className = 'badge';
-      badge.textContent = `${sec.text.split(/\s+/).length} words`;
-      li.append(cb, span, badge);
-      sectionList.appendChild(li);
-    });
-  }
-
-  function getSelectedSectionIds() {
-    return [...sectionList.querySelectorAll('input[type="checkbox"]:checked')].map(
-      (cb) => cb.dataset.sectionId
-    );
-  }
-
-  // Auto‑skip common front‑matter labels
-  function autoSkipFrontMatter() {
-    const skipKeywords = /^(cover|title|copyright|toc|table of contents|preface|foreword|introduction|acknowledg|dedication|epigraph|half title|frontispiece|contents)/i;
-    sectionList.querySelectorAll('li').forEach((li) => {
-      const label = li.querySelector('.label').textContent;
-      const cb = li.querySelector('input[type="checkbox"]');
-      cb.checked = !skipKeywords.test(label);
-    });
-  }
-
-  // ---------- Typing engine ----------
-  function startTyping(sectionIds) {
-    if (!currentBook) return;
-    currentSections = currentBook.sections.filter((s) => sectionIds.includes(s.id));
-    if (currentSections.length === 0) {
-      toast('Select at least one section');
-      return;
-    }
-    sectionIndex = 0;
-    loadSection(0);
-    showView('typing');
-  }
-
-  function loadSection(index) {
-    if (index >= currentSections.length) {
-      toast('🎉 All selected sections completed!');
-      showView('library');
-      return;
-    }
-    sectionIndex = index;
-    const sec = currentSections[index];
-    chapterTitle.textContent = sec.label;
-    progressText.textContent = `Section ${index + 1} of ${currentSections.length}`;
-
-    // Restore saved progress for this section
-    const saved = getProgress(currentBook.id, sec.id);
-    charIndex = saved < sec.text.length ? saved : 0;
-    typedChars = [];
-    errorCount = 0;
-    correctCount = 0;
-    totalTyped = 0;
-    startTime = null;
-    if (timerInterval) clearInterval(timerInterval);
-    timerInterval = null;
-    wpmDisplay.textContent = '0';
-    accuracyDisplay.textContent = '100';
-    errorsDisplay.textContent = '0';
-    timeDisplay.textContent = '0:00';
-    progressFill.style.width = '0%';
-
-    renderText(sec.text);
-    textDisplay.focus();
-  }
-
-  function renderText(fullText) {
-    // Build spans for each character (simple, no virtualisation – fine for chapters)
-    textDisplay.innerHTML = '';
-    const frag = document.createDocumentFragment();
-    for (let i = 0; i < fullText.length; i++) {
-      const span = document.createElement('span');
-      span.textContent = fullText[i];
-      span.className = 'pending';
-      span.dataset.index = i;
-      frag.appendChild(span);
-    }
-    textDisplay.appendChild(frag);
-    updateCursor();
-  }
-
-  function updateCursor() {
-    const spans = textDisplay.querySelectorAll('span');
-    spans.forEach((s, i) => {
-      s.classList.remove('current', 'correct', 'incorrect');
-      if (i < charIndex) {
-        s.classList.add(
-          typedChars[i] && typedChars[i].correct ? 'correct' : 'incorrect'
-        );
-      } else if (i === charIndex) {
-        s.classList.add('current');
-      }
-    });
-    const pct = (charIndex / spans.length) * 100;
-    progressFill.style.width = pct + '%';
-  }
-
-  function handleKey(e) {
-    if (typingView.hidden) return;
-    const sec = currentSections[sectionIndex];
-    if (!sec) return;
-
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      skipChar();
-      return;
-    }
-    if (e.key === 'Backspace') {
-      e.preventDefault();
-      if (charIndex > 0) {
-        charIndex--;
-        typedChars.pop();
-        totalTyped = Math.max(0, totalTyped - 1);
-        updateCursor();
-      }
-      return;
-    }
-    if (e.key.length !== 1) return; // ignore modifiers, arrows etc.
-
-    e.preventDefault();
-    const expected = sec.text[charIndex];
-    const actual = e.key;
-    const strict = $('#strictMode').checked;
-    let correct;
-
-    if (strict) {
-      correct = actual === expected;
-    } else {
-      // Lenient: accept straight quotes for curly quotes, hyphen for en/em dash
-      const norm = (c) =>
-        c.replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[–—]/g, '-');
-      correct = norm(actual) === norm(expected);
-    }
-
-    typedChars[charIndex] = { expected, actual, correct };
-    if (correct) {
-      correctCount++;
-    } else {
-      errorCount++;
-    }
-    totalTyped++;
-
-    if (!startTime) {
-      startTime = Date.now();
-      timerInterval = setInterval(updateTimer, 1000);
-    }
-
-    charIndex++;
-    saveProgress(currentBook.id, sec.id, charIndex);
-    updateCursor();
-    updateStats();
-
-    if (charIndex >= sec.text.length) {
-      clearInterval(timerInterval);
-      timerInterval = null;
-      toast('✅ Section complete!');
-      if (sectionIndex + 1 < currentSections.length) {
-        setTimeout(() => loadSection(sectionIndex + 1), 800);
-      } else {
-        setTimeout(() => showView('library'), 1200);
-      }
-    }
-  }
-
-  function skipChar() {
-    const sec = currentSections[sectionIndex];
-    if (charIndex < sec.text.length) {
-      typedChars[charIndex] = { expected: sec.text[charIndex], actual: null, correct: true };
-      charIndex++;
-      updateCursor();
-      updateStats();
-      saveProgress(currentBook.id, sec.id, charIndex);
-    }
-  }
-
-  function updateTimer() {
-    if (!startTime) return;
-    const elapsed = Math.floor((Date.now() - startTime) / 1000);
-    const m = Math.floor(elapsed / 60);
-    const s = elapsed % 60;
-    timeDisplay.textContent = `${m}:${String(s).padStart(2, '0')}`;
-    updateStats();
-  }
-
-  function updateStats() {
-    const elapsedMin = startTime ? (Date.now() - startTime) / 60000 : 0;
-    const wpm = elapsedMin > 0 ? Math.round(correctCount / 5 / elapsedMin) : 0;
-    wpmDisplay.textContent = wpm;
-    const acc = totalTyped > 0 ? Math.round((correctCount / totalTyped) * 100) : 100;
-    accuracyDisplay.textContent = acc;
-    errorsDisplay.textContent = errorCount;
-  }
-
-  // ---------- View switching ----------
-  function showView(name) {
-    libraryView.hidden = name !== 'library';
-    pickerView.hidden = name !== 'picker';
-    typingView.hidden = name !== 'typing';
-    backToLibrary.hidden = name === 'library';
-    if (name === 'library') {
-      backToLibrary.hidden = true;
-      if (timerInterval) clearInterval(timerInterval);
-    }
+  function resetBookProgress(id) {
+    if (!confirm('Reset progress for this book?')) return;
+    delete Store.get().progress[id];
+    delete Store.get().completed[id];
+    Store.save();
+    refreshLibrary();
+    toast('Progress reset');
   }
 
   // ---------- EPUB upload ----------
   async function handleFile(file) {
-    if (!file.name.toLowerCase().endsWith('.epub')) {
-      toast('Please upload an .epub file');
-      return;
-    }
+    if (!file.name.toLowerCase().endsWith('.epub')) { toast('Please choose an .epub file'); return; }
     toast('Parsing EPUB…', 1500);
     try {
       const { title, author, sections } = await EPUBParser.parseEPUB(file);
-      if (!sections.length) {
-        toast('No readable text sections found in this EPUB');
-        return;
-      }
+      if (!sections.length) { toast('No readable text found in this EPUB'); return; }
       const book = {
-        id: uid(),
+        id: 'b_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
         title: title || file.name.replace(/\.epub$/i, ''),
         author,
         sections,
         addedAt: Date.now(),
       };
-      library.push(book);
-      saveLibrary();
-      renderLibrary();
-      toast(`Added “${book.title}” (${sections.length} sections)`);
+      Store.get().books.push(book);
+      Store.save();
+      checkAchievement('first_book');
+      refreshLibrary();
+      toast(`Added "${book.title}" (${sections.length} sections)`);
     } catch (err) {
       console.error(err);
-      toast('Failed to parse EPUB – see console');
+      toast('Failed to parse EPUB — see console');
     }
   }
 
-  // ---------- Event listeners ----------
-  fileInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) handleFile(file);
-    fileInput.value = '';
+  $('#fileInput').addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    if (f) handleFile(f);
+    e.target.value = '';
+  });
+  const dz = $('#dropZone');
+  ['dragover', 'dragenter'].forEach((ev) => dz.addEventListener(ev, (e) => {
+    e.preventDefault(); dz.classList.add('dragover');
+  }));
+  ['dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => {
+    e.preventDefault(); dz.classList.remove('dragover');
+  }));
+  dz.addEventListener('drop', (e) => {
+    const f = e.dataTransfer.files[0];
+    if (f) handleFile(f);
   });
 
-  dropZone.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    dropZone.classList.add('dragover');
-  });
-  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-  dropZone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dropZone.classList.remove('dragover');
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
-  });
-
-  // Section picker buttons
+  // ---------- Picker ----------
+  function openPickerFor(bookId) {
+    const book = Store.get().books.find(b => b.id === bookId);
+    if (!book) return;
+    state.currentBook = book;
+    $('#pickerTitle').textContent = `Sections — "${book.title}"`;
+    renderSectionList(book);
+    showView('picker');
+  }
+  function renderSectionList(book) {
+    const completed = new Set(Store.get().completed[book.id] || []);
+    const list = $('#sectionList');
+    list.innerHTML = '';
+    book.sections.forEach((sec) => {
+      const li = document.createElement('li');
+      li.innerHTML = `
+        <input type="checkbox" data-id="${sec.id}" ${completed.has(sec.id) ? '' : 'checked'} />
+        <span class="label" title="${escapeHtml(sec.label)}">${escapeHtml(sec.label)}</span>
+        ${completed.has(sec.id) ? '<span class="badge">✓ done</span>' : ''}
+        <span class="badge">${sec.text.split(/\s+/).length} words</span>`;
+      list.appendChild(li);
+    });
+    list.querySelectorAll('input').forEach((cb) =>
+      cb.addEventListener('change', updatePickerCount));
+    updatePickerCount();
+  }
+  function updatePickerCount() {
+    const total = $$('#sectionList input').length;
+    const checked = $$('#sectionList input:checked').length;
+    $('#pickerCount').textContent = `${checked} of ${total} selected`;
+  }
   $('#selectAllBtn').addEventListener('click', () => {
-    sectionList.querySelectorAll('input[type="checkbox"]').forEach((cb) => (cb.checked = true));
+    $$('#sectionList input').forEach(cb => cb.checked = true);
+    updatePickerCount();
   });
   $('#selectNoneBtn').addEventListener('click', () => {
-    sectionList.querySelectorAll('input[type="checkbox"]').forEach((cb) => (cb.checked = false));
+    $$('#sectionList input').forEach(cb => cb.checked = false);
+    updatePickerCount();
   });
-  $('#autoSkipBtn').addEventListener('click', autoSkipFrontMatter);
+  $('#autoSkipBtn').addEventListener('click', () => {
+    const re = /^(cover|title page|copyright|toc|table of contents|contents|preface|foreword|introduction|acknowledg|dedication|epigraph|half title|frontispiece|about the author|also by)/i;
+    $$('#sectionList li').forEach((li) => {
+      const label = li.querySelector('.label').textContent;
+      const cb = li.querySelector('input');
+      if (cb) cb.checked = !re.test(label);
+    });
+    updatePickerCount();
+    toast('Front matter skipped');
+  });
   $('#cancelPickerBtn').addEventListener('click', () => showView('library'));
   $('#startTypingBtn').addEventListener('click', () => {
-    const ids = getSelectedSectionIds();
-    startTyping(ids);
+    const ids = $$('#sectionList input:checked').map(cb => cb.dataset.id);
+    if (!ids.length) { toast('Select at least one section'); return; }
+    state.currentSections = state.currentBook.sections.filter(s => ids.includes(s.id));
+    state.sectionIndex = 0;
+    loadSection(0);
+    showView('typing');
   });
 
-  // Typing controls
-  backToLibrary.addEventListener('click', () => showView('library'));
-  $('#exitTypingBtn').addEventListener('click', () => showView('library'));
-  $('#restartBtn').addEventListener('click', () => {
-    if (currentBook && currentSections[sectionIndex]) {
-      const sec = currentSections[sectionIndex];
-      saveProgress(currentBook.id, sec.id, 0);
-      loadSection(sectionIndex);
+  // ---------- Typing engine ----------
+  function loadSection(index) {
+    if (index >= state.currentSections.length) {
+      toast('🎉 All selected sections completed!');
+      showView('library');
+      return;
+    }
+    state.sectionIndex = index;
+    const sec = state.currentSections[index];
+    state.text = sec.text;
+    state.typedChars = [];
+    state.correctCount = 0;
+    state.errorCount = 0;
+    state.totalTyped = 0;
+    state.startTime = null;
+    state.pausedAt = null;
+    state.elapsedMs = 0;
+    state.paused = false;
+    $('#pauseBtn').textContent = '⏸';
+
+    // Resume saved progress
+    const saved = Store.get().progress[state.currentBook.id]?.[sec.id] || 0;
+    state.charIndex = Math.min(saved, sec.text.length);
+
+    $('#chapterTitle').textContent = sec.label;
+    $('#progressText').textContent = `Section ${index + 1} / ${state.currentSections.length}`;
+    updateStatsUI();
+    renderText();
+    updateCursor();
+    if (state.timerInterval) clearInterval(state.timerInterval);
+    state.timerInterval = setInterval(tickTimer, 500);
+    setTimeout(() => typingInput.focus(), 40);
+  }
+
+  function renderText() {
+    textDisplay.innerHTML = '';
+    textDisplay.className = 'text-display';
+    const hl = settings().highlight;
+    const txt = state.text;
+    const frag = document.createDocumentFragment();
+
+    if (hl === 'word') {
+      // Wrap each word in a span, then chars inside
+      const tokens = txt.match(/\S+|\s+/g) || [];
+      let global = 0;
+      tokens.forEach((tok) => {
+        const wordEl = document.createElement('span');
+        wordEl.className = 'word';
+        if (/^\s+$/.test(tok)) { wordEl.textContent = tok; global += tok.length; frag.appendChild(wordEl); return; }
+        for (const ch of tok) {
+          const s = document.createElement('span');
+          s.textContent = ch;
+          s.className = 'pending';
+          s.dataset.index = global++;
+          wordEl.appendChild(s);
+        }
+        frag.appendChild(wordEl);
+      });
+    } else {
+      for (let i = 0; i < txt.length; i++) {
+        const s = document.createElement('span');
+        s.textContent = txt[i];
+        s.className = 'pending';
+        s.dataset.index = i;
+        frag.appendChild(s);
+      }
+    }
+    textDisplay.appendChild(frag);
+
+    // Focus mode classes
+    const fm = $('#focusSelect').value;
+    if (fm === 'line') textDisplay.classList.add('focus-line');
+  }
+
+  function updateCursor() {
+    const spans = textDisplay.querySelectorAll('span[data-index]');
+    spans.forEach((s) => {
+      const i = +s.dataset.index;
+      s.classList.remove('current', 'correct', 'incorrect');
+      if (i < state.charIndex) {
+        s.classList.add(state.typedChars[i]?.correct ? 'correct' : 'incorrect');
+      } else if (i === state.charIndex) {
+        s.classList.add('current');
+      } else {
+        s.classList.add('pending');
+      }
+    });
+    const total = state.text.length || 1;
+    $('#progressFill').style.width = (state.charIndex / total * 100) + '%';
+
+    // Word highlight mode: highlight current word
+    if (settings().highlight === 'word') {
+      textDisplay.querySelectorAll('.word.current-word').forEach(el => el.classList.remove('current-word'));
+      const cur = textDisplay.querySelector('span.current');
+      cur?.closest('.word')?.classList.add('current-word');
+    }
+
+    // Focus modes
+    if (textDisplay.classList.contains('focus-line')) {
+      // handled by CSS - current char auto-highlighted
+    }
+
+    // Auto-scroll
+    if (settings().autoScroll) {
+      const cur = textDisplay.querySelector('span.current');
+      if (cur) {
+        const rect = cur.getBoundingClientRect();
+        const box = textDisplay.getBoundingClientRect();
+        if (rect.top < box.top + 40 || rect.bottom > box.bottom - 40) {
+          cur.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+      }
+    }
+  }
+
+  function processChar(ch) {
+    if (state.paused) return;
+    if (state.charIndex >= state.text.length) return;
+    const expected = state.text[state.charIndex];
+    const strict = $('#strictMode').checked || settings().strictPunctuation;
+    const norm = (c) => c.replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[–—]/g, '-');
+    const correct = strict ? ch === expected : norm(ch) === norm(expected);
+
+    state.typedChars[state.charIndex] = { expected, actual: ch, correct };
+    if (correct) state.correctCount++; else state.errorCount++;
+    state.totalTyped++;
+
+    if (!state.startTime) { state.startTime = Date.now(); }
+
+    if (correct) Sound.key(); else Sound.error();
+
+    state.charIndex++;
+    Store.get().progress[state.currentBook.id] ||= {};
+    Store.get().progress[state.currentBook.id][state.currentSections[state.sectionIndex].id] = state.charIndex;
+    Store.save();
+
+    updateCursor();
+    updateStatsUI();
+    checkAchievementsLive();
+
+    if (state.charIndex >= state.text.length) finishSection();
+  }
+
+  function processBackspace() {
+    if (state.paused || state.charIndex <= 0) return;
+    state.charIndex--;
+    const prev = state.typedChars[state.charIndex];
+    if (prev) {
+      if (prev.correct) state.correctCount = Math.max(0, state.correctCount - 1);
+      else state.errorCount = Math.max(0, state.errorCount - 1);
+      state.totalTyped = Math.max(0, state.totalTyped - 1);
+    }
+    state.typedChars.pop();
+    updateCursor();
+    updateStatsUI();
+  }
+
+  function processSkip() {
+    if (state.paused || state.charIndex >= state.text.length) return;
+    const expected = state.text[state.charIndex];
+    state.typedChars[state.charIndex] = { expected, actual: null, correct: true };
+    state.correctCount++;
+    state.totalTyped++;
+    state.charIndex++;
+    updateCursor();
+    updateStatsUI();
+    if (state.charIndex >= state.text.length) finishSection();
+  }
+
+  function finishSection() {
+    const sec = state.currentSections[state.sectionIndex];
+    const d = Store.get();
+    d.completed[state.currentBook.id] ||= [];
+    if (!d.completed[state.currentBook.id].includes(sec.id))
+      d.completed[state.currentBook.id].push(sec.id);
+
+    const elapsedMin = Math.max(state.elapsedMs, (Date.now() - (state.startTime || Date.now()))) / 60000;
+    const wpm = elapsedMin > 0 ? Math.round(state.correctCount / 5 / elapsedMin) : 0;
+    const accuracy = state.totalTyped > 0 ? Math.round(state.correctCount / state.totalTyped * 100) : 100;
+    const duration = Math.round((state.elapsedMs || (Date.now() - (state.startTime || Date.now()))) / 1000);
+
+    Store.recordSession({
+      bookId: state.currentBook.id,
+      bookTitle: state.currentBook.title,
+      sectionId: sec.id,
+      sectionLabel: sec.label,
+      wpm, accuracy, chars: sec.text.length, duration,
+      errors: state.errorCount,
+    });
+    checkAchievement('first_section');
+    checkSessionAchievements(wpm, duration);
+
+    if (state.timerInterval) clearInterval(state.timerInterval);
+    Sound.complete();
+    toast('✅ Section complete!');
+
+    setTimeout(() => {
+      if (state.sectionIndex + 1 < state.currentSections.length)
+        loadSection(state.sectionIndex + 1);
+      else
+        showView('library');
+    }, 700);
+  }
+
+  function tickTimer() {
+    if (!state.startTime || state.paused) return;
+    state.elapsedMs = Date.now() - state.startTime;
+    updateStatsUI();
+  }
+
+  function updateStatsUI() {
+    const elapsedMin = state.elapsedMs / 60000;
+    const wpm = elapsedMin > 0 ? Math.round(state.correctCount / 5 / elapsedMin) : 0;
+    const cpm = elapsedMin > 0 ? Math.round(state.correctCount / elapsedMin) : 0;
+    const acc = state.totalTyped > 0
+      ? Math.round(state.correctCount / state.totalTyped * 100) : 100;
+    $('#wpmDisplay').textContent = wpm;
+    $('#cpmDisplay').textContent = cpm;
+    $('#accuracyDisplay').textContent = acc;
+    $('#errorsDisplay').textContent = state.errorCount;
+    $('#charsDisplay').textContent = state.correctCount;
+    const s = Math.floor(state.elapsedMs / 1000);
+    $('#timeDisplay').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }
+
+  // ---------- Input handling ----------
+  typingInput.addEventListener('beforeinput', (e) => {
+    if (e.inputType === 'insertText' && e.data) {
+      e.preventDefault();
+      for (const ch of e.data) processChar(ch);
+    } else if (e.inputType === 'insertCompositionText') {
+      e.preventDefault();
     }
   });
+  typingInput.addEventListener('input', () => {
+    // Fallback for edge cases
+    const v = typingInput.value;
+    if (v) {
+      typingInput.value = '';
+      for (const ch of v) processChar(ch);
+    }
+  });
+  typingInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Backspace') { e.preventDefault(); processBackspace(); }
+    else if (e.key === 'Tab') { e.preventDefault(); processSkip(); }
+    else if (e.key === 'Escape') { e.preventDefault(); showView('library'); }
+  });
+  // Ensure input is focused during typing
+  document.addEventListener('keydown', (e) => {
+    if (state.activeView === 'typing' && document.activeElement !== typingInput
+        && e.key.length === 1) {
+      typingInput.focus();
+    }
+  });
+  textDisplay.addEventListener('click', () => typingInput.focus());
+  textDisplay.addEventListener('touchstart', () => typingInput.focus(), { passive: true });
+
+  // Pause / restart / next
+  $('#pauseBtn').addEventListener('click', () => {
+    if (state.paused) {
+      state.paused = false;
+      if (state.startTime) state.startTime = Date.now() - state.elapsedMs;
+      $('#pauseBtn').textContent = '⏸';
+      typingInput.focus();
+    } else {
+      state.paused = true;
+      $('#pauseBtn').textContent = '▶';
+      typingInput.blur();
+    }
+  });
+  $('#restartBtn').addEventListener('click', () => {
+    if (!state.currentBook) return;
+    const sec = state.currentSections[state.sectionIndex];
+    Store.get().progress[state.currentBook.id] ||= {};
+    Store.get().progress[state.currentBook.id][sec.id] = 0;
+    Store.save();
+    loadSection(state.sectionIndex);
+  });
   $('#nextSectionBtn').addEventListener('click', () => {
-    if (sectionIndex + 1 < currentSections.length) loadSection(sectionIndex + 1);
+    if (state.sectionIndex + 1 < state.currentSections.length) loadSection(state.sectionIndex + 1);
     else showView('library');
   });
-  $('#zenMode').addEventListener('change', (e) => {
-    document.body.classList.toggle('zen', e.target.checked);
-  });
-  $('#strictMode').addEventListener('change', () => {
-    // no immediate action – read at keypress
+  $('#exitTypingBtn').addEventListener('click', () => showView('library'));
+  $('#zenMode').addEventListener('change', (e) => document.body.classList.toggle('zen', e.target.checked));
+  $('#focusSelect').addEventListener('change', () => {
+    textDisplay.classList.remove('focus-line', 'focus-para');
+    const v = $('#focusSelect').value;
+    if (v === 'line') textDisplay.classList.add('focus-line');
   });
 
-  // Global key handler for typing
-  document.addEventListener('keydown', (e) => {
-    if (!typingView.hidden) handleKey(e);
+  // ---------- Stats ----------
+  function refreshStats() {
+    const d = Store.get();
+    const sessions = d.sessions;
+    const totalSessions = sessions.length;
+    const totalTimeSec = sessions.reduce((a, s) => a + s.duration, 0);
+    const totalChars = sessions.reduce((a, s) => a + s.chars, 0);
+    const avgWpm = totalSessions ? Math.round(sessions.reduce((a, s) => a + s.wpm, 0) / totalSessions) : 0;
+    const bestWpm = totalSessions ? Math.max(...sessions.map(s => s.wpm)) : 0;
+    const today = new Date().toISOString().slice(0, 10);
+    const todayChars = d.streak.todayDate === today ? d.streak.todayChars : 0;
+    const goalPct = Math.min(100, Math.round(todayChars / d.settings.dailyGoal * 100));
+
+    $('#statTotalSessions').textContent = totalSessions;
+    $('#statTotalTime').textContent = fmtTime(totalTimeSec);
+    $('#statTotalChars').textContent = totalChars.toLocaleString();
+    $('#statAvgWpm').textContent = avgWpm;
+    $('#statBestWpm').textContent = bestWpm;
+    $('#statStreak').textContent = d.streak.current;
+    $('#statLongestStreak').textContent = d.streak.longest;
+    $('#statGoal').textContent = goalPct + '%';
+
+    // Chart
+    const last20 = sessions.slice(-20).map(s => s.wpm);
+    Charts.barChart($('#wpmChart'), last20);
+
+    // Achievements
+    renderAchievements();
+
+    // Recent sessions
+    const list = $('#recentSessions');
+    list.innerHTML = '';
+    [...sessions].reverse().slice(0, 15).forEach((s) => {
+      const row = document.createElement('div');
+      row.className = 'session-row';
+      row.innerHTML = `
+        <div><b>${escapeHtml(s.sectionLabel)}</b><br><span class="date">${new Date(s.date).toLocaleString()}</span></div>
+        <div class="num">${s.wpm} WPM</div>
+        <div class="num">${s.accuracy}%</div>
+        <div>${s.chars} chars</div>
+        <div class="date">${fmtTime(s.duration)}</div>`;
+      list.appendChild(row);
+    });
+    if (!sessions.length) list.innerHTML = '<div style="padding:1rem" class="muted">No sessions yet.</div>';
+  }
+  function fmtTime(sec) {
+    if (sec < 60) return sec + 's';
+    if (sec < 3600) return Math.round(sec / 60) + 'm';
+    return Math.round(sec / 3600) + 'h';
+  }
+
+  // ---------- Achievements ----------
+  const ACHIEVEMENTS = [
+    { id: 'first_book',      name: 'First Upload',   icon: '📚', desc: 'Upload your first EPUB' },
+    { id: 'first_section',   name: 'First Section',  icon: '✍️', desc: 'Complete one section' },
+    { id: 'sections_10',     name: 'Getting Going',  icon: '🔟', desc: 'Complete 10 sections' },
+    { id: 'sections_50',     name: 'Halfway Hero',   icon: '⚡', desc: 'Complete 50 sections' },
+    { id: 'chars_10k',       name: '10K Club',       icon: '💪', desc: 'Type 10,000 characters' },
+    { id: 'chars_100k',      name: '100K Club',      icon: '🏆', desc: 'Type 100,000 characters' },
+    { id: 'wpm_40',          name: 'Fast Fingers',   icon: '🔥', desc: 'Reach 40 WPM' },
+    { id: 'wpm_60',          name: 'Speed Demon',    icon: '🚀', desc: 'Reach 60 WPM' },
+    { id: 'wpm_80',          name: 'Keyboard Wizard',icon: '🧙', desc: 'Reach 80 WPM' },
+    { id: 'acc_98',          name: 'Precision',      icon: '🎯', desc: 'Finish a section ≥98% accuracy' },
+    { id: 'streak_7',        name: '7-Day Streak',   icon: '📅', desc: 'Type 7 days in a row' },
+    { id: 'streak_30',       name: '30-Day Streak',  icon: '🗓️', desc: 'Type 30 days in a row' },
+  ];
+  function checkAchievement(id) {
+    const d = Store.get();
+    if (d.achievements[id]) return;
+    d.achievements[id] = true;
+    Store.save();
+    toast('🏅 Achievement unlocked!');
+  }
+  function checkSessionAchievements(wpm, duration) {
+    if (wpm >= 40) checkAchievement('wpm_40');
+    if (wpm >= 60) checkAchievement('wpm_60');
+    if (wpm >= 80) checkAchievement('wpm_80');
+    const d = Store.get();
+    const totalChars = d.sessions.reduce((a, s) => a + s.chars, 0);
+    if (totalChars >= 10000) checkAchievement('chars_10k');
+    if (totalChars >= 100000) checkAchievement('chars_100k');
+    const completedSections = Object.values(d.completed).reduce((a, arr) => a + arr.length, 0);
+    if (completedSections >= 10) checkAchievement('sections_10');
+    if (completedSections >= 50) checkAchievement('sections_50');
+    if (d.streak.current >= 7) checkAchievement('streak_7');
+    if (d.streak.current >= 30) checkAchievement('streak_30');
+  }
+  function checkAchievementsLive() {
+    if (state.totalTyped > 0) {
+      const acc = state.correctCount / state.totalTyped * 100;
+      if (acc >= 98 && state.totalTyped > 100) checkAchievement('acc_98');
+    }
+  }
+  function renderAchievements() {
+    const d = Store.get();
+    const grid = $('#achievementGrid');
+    grid.innerHTML = '';
+    ACHIEVEMENTS.forEach((a) => {
+      const el = document.createElement('div');
+      el.className = 'badge' + (d.achievements[a.id] ? ' unlocked' : '');
+      el.innerHTML = `
+        <div class="icon">${a.icon}</div>
+        <div class="name">${a.name}</div>
+        <div class="desc">${a.desc}</div>`;
+      grid.appendChild(el);
+    });
+  }
+
+  // ---------- Settings ----------
+  function refreshSettingsForm() {
+    const s = settings();
+    $('#setTheme').value = s.theme;
+    $('#setAccent').value = s.accent;
+    $('#setFontSize').value = s.fontSize;
+    $('#lblFontSize').textContent = s.fontSize;
+    $('#setLineHeight').value = s.lineHeight;
+    $('#lblLineHeight').textContent = (s.lineHeight / 10).toFixed(1);
+    $('#setFontFamily').value = s.fontFamily;
+    $('#setStrict').checked = s.strictPunctuation;
+    $('#setAutoScroll').checked = s.autoScroll;
+    $('#setSkipMode').value = s.skipMode;
+    $('#setHighlight').value = s.highlight;
+    $('#setSound').checked = s.sound;
+    $('#setVolume').value = s.volume;
+    $('#lblVolume').textContent = s.volume;
+    $('#setDailyGoal').value = s.dailyGoal;
+  }
+  function bindSetting(el, key, applyFn) {
+    el.addEventListener('input', () => {
+      const s = settings();
+      let val;
+      if (el.type === 'checkbox') val = el.checked;
+      else if (el.type === 'range' || el.type === 'number') val = +el.value;
+      else val = el.value;
+      s[key] = val;
+      Store.save();
+      applyFn && applyFn(val);
+    });
+  }
+  bindSetting($('#setTheme'), 'theme', applyTheme);
+  bindSetting($('#setAccent'), 'accent', applyTypography);
+  bindSetting($('#setFontSize'), 'fontSize', (v) => {
+    $('#lblFontSize').textContent = v; applyTypography();
+  });
+  bindSetting($('#setLineHeight'), 'lineHeight', (v) => {
+    $('#lblLineHeight').textContent = (v / 10).toFixed(1); applyTypography();
+  });
+  bindSetting($('#setFontFamily'), 'fontFamily', applyTypography);
+  bindSetting($('#setStrict'), 'strictPunctuation');
+  bindSetting($('#setAutoScroll'), 'autoScroll');
+  bindSetting($('#setSkipMode'), 'skipMode');
+  bindSetting($('#setHighlight'), 'highlight');
+  bindSetting($('#setSound'), 'sound', applySound);
+  bindSetting($('#setVolume'), 'volume', (v) => {
+    $('#lblVolume').textContent = v; applySound();
+  });
+  bindSetting($('#setDailyGoal'), 'dailyGoal');
+
+  // Export / import / reset
+  $('#exportBtn').addEventListener('click', () => {
+    const blob = new Blob([Store.exportAll()], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `epubtype-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+  $('#importInput').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {
+      Store.importAll(await f.text());
+      applyTheme(); applyTypography(); applySound();
+      toast('Data imported');
+      refreshLibrary(); refreshStats();
+    } catch (err) { console.error(err); toast('Invalid backup file'); }
+    e.target.value = '';
+  });
+  $('#resetBtn').addEventListener('click', () => {
+    if (!confirm('Erase ALL books, sessions, progress, and settings?')) return;
+    Store.reset();
+    applyTheme(); applyTypography(); applySound();
+    refreshLibrary(); refreshStats(); refreshSettingsForm();
+    toast('All data reset');
   });
 
   // ---------- PWA install ----------
   let deferredPrompt;
   window.addEventListener('beforeinstallprompt', (e) => {
-    e.preventDefault();
-    deferredPrompt = e;
-    installBtn.hidden = false;
+    e.preventDefault(); deferredPrompt = e; $('#installBtn').hidden = false;
   });
-  installBtn.addEventListener('click', async () => {
+  $('#installBtn').addEventListener('click', async () => {
     if (!deferredPrompt) return;
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === 'accepted') installBtn.hidden = true;
+    if (outcome === 'accepted') $('#installBtn').hidden = true;
     deferredPrompt = null;
   });
 
   // ---------- Service worker ----------
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').catch((err) => console.warn('SW failed', err));
-    });
+    window.addEventListener('load', () =>
+      navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW', e)));
   }
 
   // ---------- Init ----------
-  initTheme();
-  loadLibrary();
-  renderLibrary();
+  applyTheme();
+  applyTypography();
+  applySound();
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (settings().theme === 'auto') applyTheme();
+  });
+  refreshLibrary();
 })();
