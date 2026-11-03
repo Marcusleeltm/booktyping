@@ -1,93 +1,220 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#1e1e2e" />
-  <title>EPUB Type · Typing Trainer for Books</title>
-  <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="icon" href="icons/icon-192.png" />
-  <link rel="stylesheet" href="styles.css" />
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#1e1e2e" />
+<title>EPUB Type · Typing Trainer for Books</title>
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <!-- ====== HEADER ====== -->
-  <header class="topbar">
-    <h1>📖 EPUB Type</h1>
-    <div class="topbar-actions">
-      <button id="themeToggle" title="Toggle dark/light">🌓</button>
-      <button id="installBtn" title="Install app" hidden>📲 Install</button>
-      <button id="backToLibrary" hidden>📚 Library</button>
-    </div>
-  </header>
 
-  <!-- ====== LIBRARY VIEW ====== -->
-  <section id="libraryView" class="view">
-    <div class="upload-area" id="dropZone">
-      <p>Drag & drop an <strong>.epub</strong> file here</p>
-      <p class="or">— or —</p>
-      <label class="file-label">
-        <input type="file" id="fileInput" accept=".epub" hidden />
-        Choose EPUB file
-      </label>
-    </div>
+<!-- ========== TOP NAV ========== -->
+<header class="topbar">
+  <div class="brand">📖 EPUB Type</div>
+  <nav class="tabs">
+    <button data-tab="library" class="active">📚 Library</button>
+    <button data-tab="stats">📊 Stats</button>
+    <button data-tab="settings">⚙️ Settings</button>
+  </nav>
+  <button id="installBtn" hidden class="install">📲 Install</button>
+</header>
 
+<!-- ========== LIBRARY ========== -->
+<section id="view-library" class="view">
+  <div class="upload-area" id="dropZone">
+    <p>Drag &amp; drop an <strong>.epub</strong> file here</p>
+    <p class="or">— or —</p>
+    <label class="file-label">
+      <input type="file" id="fileInput" accept=".epub" hidden />
+      Choose EPUB file
+    </label>
+  </div>
+
+  <div class="lib-header">
     <h2>Your Library</h2>
-    <div id="bookList" class="book-grid"></div>
-    <p id="emptyLibrary" class="muted">No books yet. Upload an EPUB to get started.</p>
-  </section>
+    <input type="search" id="libSearch" placeholder="Search books…" />
+  </div>
+  <div id="bookList" class="book-grid"></div>
+  <p id="emptyLibrary" class="muted">No books yet. Upload an EPUB to get started.</p>
+</section>
 
-  <!-- ====== SECTION PICKER VIEW ====== -->
-  <section id="pickerView" class="view" hidden>
+<!-- ========== SECTION PICKER ========== -->
+<section id="view-picker" class="view" hidden>
+  <div class="row-between">
     <h2 id="pickerTitle">Select sections to type</h2>
-    <p class="muted">
-      Uncheck anything you want to skip (cover, TOC, preface, etc.). Only checked
-      sections will be used for typing practice.
-    </p>
-    <div class="picker-actions">
-      <button id="selectAllBtn">Select all</button>
-      <button id="selectNoneBtn">Select none</button>
-      <button id="autoSkipBtn" class="primary">Auto‑skip front matter</button>
+    <button id="cancelPickerBtn">✕ Cancel</button>
+  </div>
+  <p class="muted">
+    Uncheck anything to skip (cover, TOC, preface, etc.). Only checked sections
+    become typing practice.
+  </p>
+  <div class="picker-actions">
+    <button id="selectAllBtn">Select all</button>
+    <button id="selectNoneBtn">Select none</button>
+    <button id="autoSkipBtn" class="primary">Auto-skip front matter</button>
+  </div>
+  <ul id="sectionList" class="section-list"></ul>
+  <div class="picker-footer">
+    <span id="pickerCount" class="muted"></span>
+    <button id="startTypingBtn" class="primary">Start typing →</button>
+  </div>
+</section>
+
+<!-- ========== TYPING ========== -->
+<section id="view-typing" class="view" hidden>
+  <div class="typing-header">
+    <button id="exitTypingBtn">← Exit</button>
+    <span id="chapterTitle" class="chapter-title"></span>
+    <span id="progressText" class="muted"></span>
+  </div>
+
+  <div class="stats-bar">
+    <div class="stat"><b id="wpmDisplay">0</b><span>WPM</span></div>
+    <div class="stat"><b id="cpmDisplay">0</b><span>CPM</span></div>
+    <div class="stat"><b id="accuracyDisplay">100</b><span>%</span></div>
+    <div class="stat"><b id="errorsDisplay">0</b><span>errors</span></div>
+    <div class="stat"><b id="timeDisplay">0:00</b><span>time</span></div>
+    <div class="stat"><b id="charsDisplay">0</b><span>chars</span></div>
+    <button id="pauseBtn" title="Pause">⏸</button>
+    <button id="restartBtn" title="Restart section">↻</button>
+  </div>
+
+  <div id="textDisplay" class="text-display" tabindex="0"></div>
+
+  <!-- Hidden input drives typing on mobile & desktop -->
+  <input type="text" id="typingInput"
+         autocomplete="off" autocorrect="off" autocapitalize="off"
+         spellcheck="false" aria-hidden="true" />
+
+  <div class="typing-footer">
+    <div class="progress-bar"><div id="progressFill"></div></div>
+    <div class="typing-controls">
+      <label><input type="checkbox" id="strictMode" /> Strict punctuation</label>
+      <label><input type="checkbox" id="zenMode" /> Zen mode</label>
+      <label class="focus-select">
+        Focus:
+        <select id="focusSelect">
+          <option value="off">Off</option>
+          <option value="line">Line</option>
+          <option value="paragraph">Paragraph</option>
+        </select>
+      </label>
+      <button id="nextSectionBtn" class="primary">Next section →</button>
     </div>
-    <ul id="sectionList" class="section-list"></ul>
-    <div class="picker-footer">
-      <button id="cancelPickerBtn">Cancel</button>
-      <button id="startTypingBtn" class="primary">Start typing →</button>
-    </div>
-  </section>
+  </div>
+</section>
 
-  <!-- ====== TYPING VIEW ====== -->
-  <section id="typingView" class="view" hidden>
-    <div class="typing-header">
-      <button id="exitTypingBtn">← Back</button>
-      <span id="chapterTitle" class="chapter-title"></span>
-      <span id="progressText" class="muted"></span>
-    </div>
+<!-- ========== STATS ========== -->
+<section id="view-stats" class="view" hidden>
+  <h2>Statistics</h2>
 
-    <div class="stats-bar">
-      <div><span id="wpmDisplay">0</span> WPM</div>
-      <div><span id="accuracyDisplay">100</span>%</div>
-      <div><span id="errorsDisplay">0</span> errors</div>
-      <div><span id="timeDisplay">0:00</span></div>
-      <button id="restartBtn" title="Restart section">↻</button>
-    </div>
+  <div class="stat-cards">
+    <div class="card"><b id="statTotalSessions">0</b><span>sessions</span></div>
+    <div class="card"><b id="statTotalTime">0m</b><span>total time</span></div>
+    <div class="card"><b id="statTotalChars">0</b><span>chars typed</span></div>
+    <div class="card"><b id="statAvgWpm">0</b><span>avg WPM</span></div>
+    <div class="card"><b id="statBestWpm">0</b><span>best WPM</span></div>
+    <div class="card"><b id="statStreak">0</b><span>day streak</span></div>
+    <div class="card"><b id="statLongestStreak">0</b><span>longest streak</span></div>
+    <div class="card"><b id="statGoal">0%</b><span>today's goal</span></div>
+  </div>
 
-    <div id="textDisplay" class="text-display" tabindex="0"></div>
+  <h3>WPM · last 20 sessions</h3>
+  <div id="wpmChart" class="chart"></div>
 
-    <div class="typing-footer">
-      <div class="progress-bar"><div id="progressFill"></div></div>
-      <div class="typing-controls">
-        <label><input type="checkbox" id="strictMode" /> Strict punctuation</label>
-        <label><input type="checkbox" id="zenMode" /> Zen mode</label>
-        <button id="nextSectionBtn" class="primary">Next section →</button>
-      </div>
-    </div>
-  </section>
+  <h3>Achievements</h3>
+  <div id="achievementGrid" class="badge-grid"></div>
 
-  <!-- ====== MODAL / TOAST ====== -->
-  <div id="toast" class="toast" hidden></div>
+  <h3>Recent sessions</h3>
+  <div id="recentSessions" class="session-list"></div>
+</section>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <script src="epub-parser.js"></script>
-  <script src="app.js"></script>
+<!-- ========== SETTINGS ========== -->
+<section id="view-settings" class="view" hidden>
+  <h2>Settings</h2>
+
+  <div class="settings-group">
+    <h3>Appearance</h3>
+    <label>Theme
+      <select id="setTheme">
+        <option value="auto">Auto</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+    </label>
+    <label>Accent color
+      <input type="color" id="setAccent" />
+    </label>
+    <label>Font size: <b id="lblFontSize">20</b>px
+      <input type="range" id="setFontSize" min="14" max="34" />
+    </label>
+    <label>Line height: <b id="lblLineHeight">1.8</b>
+      <input type="range" id="setLineHeight" min="12" max="30" step="1" />
+    </label>
+    <label>Font family
+      <select id="setFontFamily">
+        <option value="serif">Serif (Georgia)</option>
+        <option value="sans">Sans (Inter)</option>
+        <option value="mono">Mono</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="settings-group">
+    <h3>Typing</h3>
+    <label><input type="checkbox" id="setStrict" /> Strict punctuation</label>
+    <label><input type="checkbox" id="setAutoScroll" /> Auto-scroll to cursor</label>
+    <label>Skip on error
+      <select id="setSkipMode">
+        <option value="tab">Tab to skip</option>
+        <option value="auto">Auto-skip</option>
+        <option value="none">No skip</option>
+      </select>
+    </label>
+    <label>Highlight
+      <select id="setHighlight">
+        <option value="char">Character by character</option>
+        <option value="word">Word by word</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="settings-group">
+    <h3>Sound</h3>
+    <label><input type="checkbox" id="setSound" /> Keypress &amp; error sounds</label>
+    <label>Volume: <b id="lblVolume">30</b>%
+      <input type="range" id="setVolume" min="0" max="100" />
+    </label>
+  </div>
+
+  <div class="settings-group">
+    <h3>Daily goal</h3>
+    <label>Characters per day
+      <input type="number" id="setDailyGoal" min="100" max="20000" step="100" />
+    </label>
+  </div>
+
+  <div class="settings-group">
+    <h3>Data</h3>
+    <button id="exportBtn">⬇ Export data (JSON)</button>
+    <label class="file-label small">
+      <input type="file" id="importInput" accept="application/json" hidden />
+      ⬆ Import data
+    </label>
+    <button id="resetBtn" class="danger">🗑 Reset all data</button>
+  </div>
+</section>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="epub-parser.js"></script>
+<script src="storage.js"></script>
+<script src="audio.js"></script>
+<script src="charts.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
