@@ -18,6 +18,14 @@
   const textDisplay = $('#textDisplay');
   const toastEl = $('#toast');
 
+  // Sync DOM
+  const syncTokenInput  = $('#syncToken');
+  const syncConnectBtn  = $('#syncConnectBtn');
+  const syncNotConnected = $('#syncNotConnected');
+  const syncConnected   = $('#syncConnected');
+  const syncGistId      = $('#syncGistId');
+  const syncStatus      = $('#syncStatus');
+
   // ---------- State ----------
   const state = {
     activeView: 'library',
@@ -35,7 +43,6 @@
     elapsedMs: 0,
     timerInterval: null,
     paused: false,
-    currentSectionEl: null,
   };
 
   const settings = () => Store.get().settings;
@@ -86,7 +93,7 @@
     state.activeView = name;
     if (name === 'library') refreshLibrary();
     if (name === 'stats')    refreshStats();
-    if (name === 'settings') refreshSettingsForm();
+    if (name === 'settings') { refreshSettingsForm(); refreshSyncPanel(); }
     if (name === 'typing') {
       setTimeout(() => typingInput.focus(), 50);
     } else {
@@ -283,10 +290,9 @@
     state.charIndex = Math.min(saved, sec.text.length);
 
     // Pre-populate typedChars for resumed positions so they render green
-state.typedChars = [];
-for (let i = 0; i < state.charIndex; i++) {
-  state.typedChars[i] = { expected: sec.text[i], actual: sec.text[i], correct: true };
-}
+    for (let i = 0; i < state.charIndex; i++) {
+      state.typedChars[i] = { expected: sec.text[i], actual: sec.text[i], correct: true };
+    }
 
     $('#chapterTitle').textContent = sec.label;
     $('#progressText').textContent = `Section ${index + 1} / ${state.currentSections.length}`;
@@ -306,7 +312,6 @@ for (let i = 0; i < state.charIndex; i++) {
     const frag = document.createDocumentFragment();
 
     if (hl === 'word') {
-      // Wrap each word in a span, then chars inside
       const tokens = txt.match(/\S+|\s+/g) || [];
       let global = 0;
       tokens.forEach((tok) => {
@@ -333,33 +338,10 @@ for (let i = 0; i < state.charIndex; i++) {
     }
     textDisplay.appendChild(frag);
 
-    // Focus mode classes
     const fm = $('#focusSelect').value;
     if (fm === 'line') textDisplay.classList.add('focus-line');
   }
-  
-function persistProgress() {
-  const d = Store.get();
-  const sec = state.currentSections[state.sectionIndex];
-  if (!sec) return;
-  d.progress[state.currentBook.id] ||= {};
-  d.progress[state.currentBook.id][sec.id] = state.charIndex;
-  Store.save();
-}
 
-function flashIncorrect() {
-  const cur = textDisplay.querySelector('span.current');
-  if (!cur) return;
-  // Clear any prior flash on the same span
-  if (cur._flashTimer) clearTimeout(cur._flashTimer);
-  cur.classList.add('incorrect');
-  cur._flashTimer = setTimeout(() => {
-    cur.classList.remove('incorrect');
-    // Only restore "current" if the user hasn't advanced past this char
-    if (+cur.dataset.index === state.charIndex) cur.classList.add('current');
-  }, 220);
-}
-  
   function updateCursor() {
     const spans = textDisplay.querySelectorAll('span[data-index]');
     spans.forEach((s) => {
@@ -376,19 +358,12 @@ function flashIncorrect() {
     const total = state.text.length || 1;
     $('#progressFill').style.width = (state.charIndex / total * 100) + '%';
 
-    // Word highlight mode: highlight current word
     if (settings().highlight === 'word') {
       textDisplay.querySelectorAll('.word.current-word').forEach(el => el.classList.remove('current-word'));
       const cur = textDisplay.querySelector('span.current');
       cur?.closest('.word')?.classList.add('current-word');
     }
 
-    // Focus modes
-    if (textDisplay.classList.contains('focus-line')) {
-      // handled by CSS - current char auto-highlighted
-    }
-
-    // Auto-scroll
     if (settings().autoScroll) {
       const cur = textDisplay.querySelector('span.current');
       if (cur) {
@@ -401,65 +376,84 @@ function flashIncorrect() {
     }
   }
 
-function processChar(ch) {
-  if (state.paused) return;
-  if (state.charIndex >= state.text.length) return;
+  function persistProgress() {
+    const d = Store.get();
+    const sec = state.currentSections[state.sectionIndex];
+    if (!sec) return;
+    d.progress[state.currentBook.id] ||= {};
+    d.progress[state.currentBook.id][sec.id] = state.charIndex;
+    Store.save();
+  }
 
-  const expected = state.text[state.charIndex];
-  const strict = $('#strictMode').checked || settings().strictPunctuation;
-  const norm = (c) =>
-    c.replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[–—]/g, '-');
-  const correct = strict ? ch === expected : norm(ch) === norm(expected);
+  function flashIncorrect() {
+    const cur = textDisplay.querySelector('span.current');
+    if (!cur) return;
+    if (cur._flashTimer) clearTimeout(cur._flashTimer);
+    cur.classList.add('incorrect');
+    cur._flashTimer = setTimeout(() => {
+      cur.classList.remove('incorrect');
+      if (+cur.dataset.index === state.charIndex) cur.classList.add('current');
+    }, 220);
+  }
 
-  if (!state.startTime) state.startTime = Date.now();
+  function processChar(ch) {
+    if (state.paused) return;
+    if (state.charIndex >= state.text.length) return;
 
-  // ── WRONG KEY ─────────────────────────────────────────────
-  if (!correct) {
-    state.errorCount++;
-    state.totalTyped++;
-    Sound.error();
+    const expected = state.text[state.charIndex];
+    const strict = $('#strictMode').checked || settings().strictPunctuation;
+    const norm = (c) =>
+      c.replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[–—]/g, '-');
+    const correct = strict ? ch === expected : norm(ch) === norm(expected);
 
-    if (settings().stopOnMistake) {
-      // STRICT: do NOT advance; flash the current character red briefly.
-      flashIncorrect();
+    if (!state.startTime) state.startTime = Date.now();
+
+    // ── WRONG KEY ─────────────────────────────────────────────
+    if (!correct) {
+      state.errorCount++;
+      state.totalTyped++;
+      Sound.error();
+
+      if (settings().stopOnMistake) {
+        flashIncorrect();
+        updateStatsUI();
+        return;
+      }
+      state.typedChars[state.charIndex] = { expected, actual: ch, correct: false };
+      state.charIndex++;
+      persistProgress();
+      updateCursor();
       updateStatsUI();
-      return;                            // ← cursor stays on same char
+      if (state.charIndex >= state.text.length) finishSection();
+      return;
     }
-    // FREE-TYPE fallback: advance but mark red
-    state.typedChars[state.charIndex] = { expected, actual: ch, correct: false };
+
+    // ── CORRECT KEY ───────────────────────────────────────────
+    state.typedChars[state.charIndex] = { expected, actual: ch, correct: true };
+    state.correctCount++;
+    state.totalTyped++;
+    Sound.key();
+
     state.charIndex++;
     persistProgress();
     updateCursor();
     updateStatsUI();
+    checkAchievementsLive();
+
     if (state.charIndex >= state.text.length) finishSection();
-    return;
   }
 
-  // ── CORRECT KEY ───────────────────────────────────────────
-  state.typedChars[state.charIndex] = { expected, actual: ch, correct: true };
-  state.correctCount++;
-  state.totalTyped++;
-  Sound.key();
-
-  state.charIndex++;
-  persistProgress();
-  updateCursor();
-  updateStatsUI();
-  checkAchievementsLive();
-
-  if (state.charIndex >= state.text.length) finishSection();
-}
   function processBackspace() {
-  if (state.paused || state.charIndex <= 0) return;
-  state.charIndex--;
-  const prev = state.typedChars[state.charIndex];
-  if (prev && prev.correct) state.correctCount = Math.max(0, state.correctCount - 1);
-  state.typedChars.pop();
-  state.totalTyped = Math.max(0, state.totalTyped - 1);
-  persistProgress();
-  updateCursor();
-  updateStatsUI();
-}
+    if (state.paused || state.charIndex <= 0) return;
+    state.charIndex--;
+    const prev = state.typedChars[state.charIndex];
+    if (prev && prev.correct) state.correctCount = Math.max(0, state.correctCount - 1);
+    state.typedChars.pop();
+    state.totalTyped = Math.max(0, state.totalTyped - 1);
+    persistProgress();
+    updateCursor();
+    updateStatsUI();
+  }
 
   function processSkip() {
     if (state.paused || state.charIndex >= state.text.length) return;
@@ -468,6 +462,7 @@ function processChar(ch) {
     state.correctCount++;
     state.totalTyped++;
     state.charIndex++;
+    persistProgress();
     updateCursor();
     updateStatsUI();
     if (state.charIndex >= state.text.length) finishSection();
@@ -539,7 +534,6 @@ function processChar(ch) {
     }
   });
   typingInput.addEventListener('input', () => {
-    // Fallback for edge cases
     const v = typingInput.value;
     if (v) {
       typingInput.value = '';
@@ -551,7 +545,6 @@ function processChar(ch) {
     else if (e.key === 'Tab') { e.preventDefault(); processSkip(); }
     else if (e.key === 'Escape') { e.preventDefault(); showView('library'); }
   });
-  // Ensure input is focused during typing
   document.addEventListener('keydown', (e) => {
     if (state.activeView === 'typing' && document.activeElement !== typingInput
         && e.key.length === 1) {
@@ -561,7 +554,6 @@ function processChar(ch) {
   textDisplay.addEventListener('click', () => typingInput.focus());
   textDisplay.addEventListener('touchstart', () => typingInput.focus(), { passive: true });
 
-  // Pause / restart / next
   $('#pauseBtn').addEventListener('click', () => {
     if (state.paused) {
       state.paused = false;
@@ -616,14 +608,11 @@ function processChar(ch) {
     $('#statLongestStreak').textContent = d.streak.longest;
     $('#statGoal').textContent = goalPct + '%';
 
-    // Chart
     const last20 = sessions.slice(-20).map(s => s.wpm);
     Charts.barChart($('#wpmChart'), last20);
 
-    // Achievements
     renderAchievements();
 
-    // Recent sessions
     const list = $('#recentSessions');
     list.innerHTML = '';
     [...sessions].reverse().slice(0, 15).forEach((s) => {
@@ -713,6 +702,7 @@ function processChar(ch) {
     $('#lblLineHeight').textContent = (s.lineHeight / 10).toFixed(1);
     $('#setFontFamily').value = s.fontFamily;
     $('#setStrict').checked = s.strictPunctuation;
+    $('#setStopOnMistake').checked = s.stopOnMistake;
     $('#setAutoScroll').checked = s.autoScroll;
     $('#setSkipMode').value = s.skipMode;
     $('#setHighlight').value = s.highlight;
@@ -720,7 +710,6 @@ function processChar(ch) {
     $('#setVolume').value = s.volume;
     $('#lblVolume').textContent = s.volume;
     $('#setDailyGoal').value = s.dailyGoal;
-    $('#setStopOnMistake').checked = s.stopOnMistake;
   }
   function bindSetting(el, key, applyFn) {
     el.addEventListener('input', () => {
@@ -744,6 +733,7 @@ function processChar(ch) {
   });
   bindSetting($('#setFontFamily'), 'fontFamily', applyTypography);
   bindSetting($('#setStrict'), 'strictPunctuation');
+  bindSetting($('#setStopOnMistake'), 'stopOnMistake');
   bindSetting($('#setAutoScroll'), 'autoScroll');
   bindSetting($('#setSkipMode'), 'skipMode');
   bindSetting($('#setHighlight'), 'highlight');
@@ -752,7 +742,6 @@ function processChar(ch) {
     $('#lblVolume').textContent = v; applySound();
   });
   bindSetting($('#setDailyGoal'), 'dailyGoal');
-  bindSetting($('#setStopOnMistake'), 'stopOnMistake');
 
   // Export / import / reset
   $('#exportBtn').addEventListener('click', () => {
@@ -782,6 +771,78 @@ function processChar(ch) {
     toast('All data reset');
   });
 
+  // ---------- Cloud Sync ----------
+  function refreshSyncPanel() {
+    const connected = Sync.isConnected();
+    syncNotConnected.hidden = connected;
+    syncConnected.hidden = !connected;
+    if (connected) {
+      syncGistId.textContent = Sync.getGistId();
+      if (syncStatus) syncStatus.textContent = 'Ready.';
+    }
+    $('#syncAuto').checked = localStorage.getItem('epubtype_sync_auto') !== '0';
+  }
+
+  syncConnectBtn.addEventListener('click', async () => {
+    const token = syncTokenInput.value.trim();
+    if (!token) { toast('Paste a GitHub token first'); return; }
+    syncConnectBtn.disabled = true;
+    try {
+      await Sync.connect(token);
+      syncTokenInput.value = '';
+      await Sync.pull();
+      await Sync.push();
+      refreshLibrary();
+      refreshStats();
+      refreshSettingsForm();
+      refreshSyncPanel();
+      toast('✅ Connected & synced');
+    } catch (err) {
+      console.error(err);
+      toast('❌ ' + err.message);
+    } finally {
+      syncConnectBtn.disabled = false;
+    }
+  });
+
+  $('#syncPullBtn').addEventListener('click', async () => {
+    try {
+      $('#syncPullBtn').disabled = true;
+      await Sync.pull();
+      refreshLibrary();
+      refreshStats();
+      refreshSettingsForm();
+      toast('⬇ Pulled from cloud');
+    } catch (err) {
+      toast('❌ ' + err.message);
+    } finally {
+      $('#syncPullBtn').disabled = false;
+    }
+  });
+
+  $('#syncPushBtn').addEventListener('click', async () => {
+    try {
+      $('#syncPushBtn').disabled = true;
+      await Sync.push();
+      toast('⬆ Pushed to cloud');
+    } catch (err) {
+      toast('❌ ' + err.message);
+    } finally {
+      $('#syncPushBtn').disabled = false;
+    }
+  });
+
+  $('#syncDisconnectBtn').addEventListener('click', () => {
+    if (!confirm('Disconnect from cloud sync? Local data stays untouched.')) return;
+    Sync.disconnect();
+    refreshSyncPanel();
+    toast('Disconnected');
+  });
+
+  $('#syncAuto').addEventListener('change', (e) => {
+    Sync.setAutoSync(e.target.checked);
+  });
+
   // ---------- PWA install ----------
   let deferredPrompt;
   window.addEventListener('beforeinstallprompt', (e) => {
@@ -809,4 +870,9 @@ function processChar(ch) {
     if (settings().theme === 'auto') applyTheme();
   });
   refreshLibrary();
+
+  // Cloud sync init + auto-push hook
+  Sync.init();
+  refreshSyncPanel();
+  Store.onSave(() => Sync.schedulePush());
 })();
