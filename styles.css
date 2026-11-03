@@ -148,6 +148,16 @@ body.zen .text-display{font-size:calc(var(--typing-size) * 1.15);border:none;bac
   background:var(--text);color:var(--bg);padding:.7rem 1.3rem;border-radius:999px;
   font-size:.9rem;z-index:100;box-shadow:0 4px 20px rgba(0,0,0,.2)}
 
+/* Wrong-key feedback */
+.text-display span.current.incorrect {
+  animation: typo-shake 0.15s ease-in-out;
+}
+@keyframes typo-shake {
+  0%, 100% { transform: translateX(0); }
+  25%      { transform: translateX(-2px); }
+  75%      { transform: translateX(2px); }
+}
+
 @media (max-width:600px){
   .tabs button{padding:.4rem .6rem;font-size:.8rem}
   .brand{display:none}
